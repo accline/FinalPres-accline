@@ -1,0 +1,493 @@
+---
+title: "Final Project"
+author: "Alice Cline"
+date: "2023-11-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo=FALSE) 
+library(readr)
+library(haven)
+library(tidyverse)
+library(table1)
+library(ggplot2)
+library(mmtable2)
+library(gt)
+library(grDevices)
+library(dplyr)
+library(gtsummary)
+library(patchwork)
+```
+
+# Introduction
+
+In 2010, the passage of the Affordable Care Act enabled states to decide whether to enact Medicaid Expansion. These expansions enabled states to offer Medicaid coverage to a wider range of poor adults, families, and children. 
+
+By 2020, 12 states had expanded Medicaid. These 12 states had higher rates of Medicaid participation, and lower rates of uninsurance, including among pregnant women and new mothers. 
+
+```{r, echo=FALSE}
+knitr::include_graphics(rep("StateMeimage.png", 1))
+```
+
+Note: this image includes 6 states in blue that adopted ME between 2020-2023 and are not included in my Expansion states category.
+
+## Description of the problem
+
+While it's easy to see improvements in insurance coverage in Expansion states after they enacted Medicaid Expansion, it's more difficult to determine whether Medicaid Expansion led to improvements in prenatal care or pregnancy outcomes for women in those states. 
+
+The image below demostrates that rates of uninsurance among pregnant women in Expansion states (blue) is significantly lower than in non-Expansion states (orange).
+
+```{r, echo=FALSE}
+knitr::include_graphics(rep("Uninsured.png", 1))
+```
+
+The image above is copied from an article by U. Ranji et al., linked [here](https://www.kff.org/womens-health-policy/issue-brief/loss-of-the-aca-could-greatly-erode-health-coverage-and-benefits-for-women/).
+
+## Research question & Methods
+
+I propose to answer this question: 
+
+**Are insurance coverage rates and maternal health care utilization better in states that expanded Medicaid?**
+
+Using data from the CDC Pregnancy Risk Assessment Monitoring Survey (PRAMS) from 2020, I will compare participants in states that did and did not expand Medicaid by 2020. I will use logistic regression to determine if there are differences in uninsurance rates (before, during, and after pregnancy) and maternal health care utilization (adequate prenatal care measured by the Kessner Index and attendance at a postpartum visit).
+
+The PRAMS data set surveys women 2-4 months after the birth of their child and asks numerous questions about their care before, during, and after pregnancy. The variables of interest in this analysis are:
+
+* **Independent variable:** Naturally occurring policy change - Medicaid Expansion
+* **Dependent variables:**
+  * _Uninsurance rates:_ Before pregnancy, During pregnancy, Postpartum (after delivery)
+  * _Maternal health care utilization:_ Adequate prenatal care, Attendance at a postpartum visit
+
+## Table of states with date of Medicaid Expansion
+As of the end of 2019, 34 states had expanded Medicaid. We will designate participants in these states as the "Expansion group". Individuals in the remaining 35 states (only 47 states participate in PRAMS) will be designated as the "Non-Expansion group". 
+
+Note: since 2020, several more states (Missouri, Nebraska, North Carolina, Oklahoma, South Dakota, Utah) have adopted Medicaid Expansion, but since participants in these states will not have benefitted from the change in policies by the time of data collection, they are included in the "Non-Expansion group". 
+
+```{r, echo=FALSE}
+table2 <- tribble(
+  ~"State", ~"Adopted ME", ~"Year",
+  "Alabama", "no", 0,
+  "Alaska", "yes", 2015,
+  "Arizona", "yes", 2014,
+  "Arkansas", "yes", 2014,
+  "California", "yes", 2014,
+  "Colorado", "yes", 2014,
+  "Connecticut", "yes", 2014,
+  "Delaware", "yes", 2014,
+  "Florida", "no", 0,
+  "Georgia", "no", 0,
+  "Hawaii", "yes", 2014,
+  "Idaho", "yes", 2020,
+  "Illinois", "yes", 2014,
+  "Indiana", "yes", 2015,
+  "Iowa", "yes", 2014,
+  "Kansas", "no", 0,
+  "Kentucky", "yes", 2014,
+  "Louisiana", "yes", 2016,
+  "Maine", "yes", 2018,
+  "Maryland", "yes", 2014,
+  "Massachussets", "yes", 2014,
+  "Michigan", "yes", 2014,
+  "Minnisota", "yes", 2014,
+  "Mississippi", "no", 0,
+  "Missouri", "no", 0,
+  "Montana", "yes", 2016,
+  "Nebraska", "no", 0,
+  "Nevada", "yes", 2014,
+  "New Hampshire", "yes", 2014,
+  "New Jersey", "yes", 2014,
+  "New Mexico", "yes", 2014,
+  "New York", "yes", 2014,
+  "North Carolina", "no", 0,
+  "North Dakota", "yes", 2014,
+  "Ohio", "yes", 2014,
+  "Oklahoma", "no", 0,
+  "Oregon", "yes", 2014,
+  "Pennsylvania", "yes", 2015,
+  "Rhode Island", "yes", 2014,
+  "South Carolina", "no", 0,
+  "South Dakota", "no", 0,
+  "Tennessee", "no", 0,
+  "Texas", "no", 0,
+  "Utah", "no", 0,
+  "Vermont", "yes", 2014,
+  "Virginia", "yes", 2018,
+  "Washington", "yes", 2014,
+  "West Virginia", "yes", 2014,
+  "Wisconsin", "no", 0,
+  "Wyoming", "no", 0
+)
+
+MEstateTab2 <- 
+  table2 %>% gt() %>%
+    tab_header(title = "Medicaid Expansion States by Year")
+
+MEstateTab2
+```
+
+# Set up dataset
+I used the following steps to prepare my data
+
+* Load PRAMS dataset
+
+* Retain only the relevant variables:
+
+  * State of residence during birth 
+  * Sociodemographic factors of the mother: RaceEth, age, education, WIC, married
+  * Insurance status at 3 time points
+  * Adequate prenatal care and Attendance at a postpartum visit
+  
+  
+* Mutate variables to improve interpretation
+
+  * Create variable for state Medicaid Expansion status
+  * Create variable for any point of uninsurance in perinatal period
+  * Create variable for full maternal care utilization in perinatal period
+
+
+```{r, include=FALSE}
+# load data
+PRAMS_2020 <- read_sav("~/Documents/1School/1Pitt PhD/1_Course Work/1_2023 Fall/Data Science/Final project/Dataset.sav")
+PRAMS_2020 <- as_tibble(PRAMS_2020) 
+PRAMS_2020 <- select(PRAMS_2020, 'ID', STATE, HISPANIC, MARRIED, MAT_AGE_NAPHSIS, MAT_RACE, MAT_WIC, 'PRE_VIST', MAT_ED, INSNONE, PP_NONE_RAW, HI_NONE, PPV_CHK, KESSNER)
+
+# build SD categories
+## Hispanic No=0
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(HispBin = case_when(
+    HISPANIC == 1 ~ 0,
+    HISPANIC == 2 ~ 1,
+  ))
+## Race 1=white, 2=Black, 3=other
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(RaceRec = case_when(
+    MAT_RACE == 2 ~ 1,
+    MAT_RACE == 3 ~ 2,
+    MAT_RACE >3 ~3
+  )) 
+## Race/ethnicity 1=white non-Hisp, 2=Black non-Hisp, 3=other race non-Hisp, 4=Hispanic
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(RaceEth = case_when(
+    RaceRec == 1 & HispBin == 0 ~ "White non-Hispanic",
+    RaceRec == 2 & HispBin == 0 ~ "Black non-Hispanic",
+    RaceRec == 3 & HispBin == 0 ~ "other race non-Hispanic",
+    HispBin == 1 ~ "Hispanic"
+  ))
+
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(RaceEthN = case_when(
+    RaceRec == 1 & HispBin == 0 ~ 1,
+    RaceRec == 2 & HispBin == 0 ~ 2,
+    RaceRec == 3 & HispBin == 0 ~ 3,
+    HispBin == 1 ~ 4
+  ))
+
+## WIC
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(WIC = case_when(
+    MAT_WIC == 1 ~ "yes",
+    MAT_WIC == 2 ~ "no"
+  ))
+## married
+PRAMS_2020 <- PRAMS_2020 %>% 
+  mutate(married = case_when(
+    MARRIED == 1 ~ "yes",
+    MARRIED == 2 ~ "no"
+  ))
+## age
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(age = case_when(
+    MAT_AGE_NAPHSIS == 1 ~ "<17",
+    MAT_AGE_NAPHSIS == 2 ~ "18-19",
+    MAT_AGE_NAPHSIS == 3 ~ "20-24",
+    MAT_AGE_NAPHSIS == 4 ~ "25-29",
+    MAT_AGE_NAPHSIS == 5 ~ "30-34",
+    MAT_AGE_NAPHSIS == 6 ~ "35-39",
+    MAT_AGE_NAPHSIS == 7 ~ ">40"))
+
+## education
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(education = case_when(
+    MAT_ED < 3 ~ "less than HS",
+    MAT_ED == 3 ~ "HS grad",
+    MAT_ED == 4 ~ "some college",
+    MAT_ED > 4 ~ "college grad"
+  ))
+
+# build insurance categories
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(TotUninsured = INSNONE + HI_NONE + PP_NONE_RAW)
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(InsCont = case_when(
+    TotUninsured == 3 ~ "Continuous",
+    TotUninsured >3 ~ "Churn"
+  ))
+
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(InsContN = case_when(
+    TotUninsured == 3 ~ 1,
+    TotUninsured >3 ~ 0
+  ))
+
+# build utilization categories
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(AdeqPNC = case_when(
+    KESSNER == 1 ~ 1,
+    KESSNER > 1 ~ 0))
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(PrePregR = case_when(
+    PRE_VIST == 2 ~ 1,
+    PRE_VIST == 1 ~ 0))
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(PostVisR = case_when(
+    PPV_CHK == 2 ~ 1,
+    PPV_CHK == 1 ~ 0)) 
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(TotUtil = PrePregR + AdeqPNC + PostVisR) 
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(TotUtilR = case_when(
+  TotUtil == 3 ~ "Full Utilization",
+  TotUtil < 3 ~ "No"
+))
+
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(TotUtilRN = case_when(
+  TotUtil == 3 ~ 1,
+  TotUtil < 3 ~ 0
+))
+
+# build ME category
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(ExpSt = case_when(
+    STATE ==  "AL" ~ 0,
+    STATE == "FL" ~ 0,
+    STATE == "GA" ~ 0, 
+    STATE == "KS" ~ 0,
+    STATE == "MS" ~ 0,
+    STATE == "MO" ~ 0,
+    STATE == "NE" ~ 0,
+    STATE == "NC" ~ 0,
+    STATE == "NV" ~ 0,
+    STATE == "OK" ~ 0,
+    STATE == "SC" ~ 0, 
+    STATE == "SD" ~ 0,
+    STATE == "TN" ~ 0,
+    STATE == "UT" ~ 0,
+    STATE == "WI" ~ 0,
+    STATE == "WY" ~ 0,
+    STATE == "AK" ~ 1,
+    STATE == "AZ" ~ 1,
+    STATE == "AR" ~ 1,
+    STATE == "CO" ~ 1,
+    STATE == "CT" ~ 1,
+    STATE == "DC" ~ 1,
+    STATE == "DE" ~ 1,
+    STATE == "HI" ~ 1,
+    STATE == "IA" ~ 1,
+    STATE == "IL" ~ 1,
+    STATE == "IN" ~ 1,
+    STATE == "KY" ~ 1,
+    STATE == "LA" ~ 1,
+    STATE == "MA" ~ 1,
+    STATE == "MD" ~ 1,
+    STATE == "ME" ~ 1,
+    STATE == "MI" ~ 1,
+    STATE == "MN" ~ 1,
+    STATE == "MT" ~ 1,
+    STATE == "ND" ~ 1,
+    STATE == "NH" ~ 1,
+    STATE == "NJ" ~ 1,
+    STATE == "NM" ~ 1,
+    STATE == "NY" ~ 1,
+    STATE == "OR" ~ 1,
+    STATE == "PA" ~ 1,
+    STATE == "PR" ~ 1,
+    STATE == "RI" ~ 1,
+    STATE == "VA" ~ 1,
+    STATE == "VT" ~ 1,
+    STATE == "WA" ~ 1,
+    STATE == "WV" ~ 1,
+    STATE == "YC" ~ 1,
+  ))
+PRAMS_2020 <- PRAMS_2020 %>%
+  mutate(ExpY = case_when(
+    ExpSt == 1 ~ "yes",
+    ExpSt == 0 ~ "no"
+))
+
+
+PRAMS_set <- PRAMS_2020 %>%
+  select(ID, STATE, ExpSt, ExpY, age, RaceEth, RaceEthN, married, education, WIC, TotUtilR, TotUtilRN, InsCont, InsContN)
+PRAMS_set
+```
+
+# Results
+## Descriptive statistics
+This table compares the sociodemographic characteristics of the women who delivered in Expansion versus Non-Expansion states. 
+
+```{r, warnings=FALSE, echo=FALSE}
+demoPRAMS <-
+  PRAMS_set |>
+  select(ExpY, age, RaceEth, married, WIC, education)
+
+demoPRAMS |>
+  tbl_summary(
+    by = ExpY,
+    missing = "no",
+    label = list(age ~ "Age in years", RaceEth ~ "Race & Ethnicity", married ~ "Marital Status (yes)", WIC ~ "WIC enrollment (yes)", education ~ "Education Level")) |>
+  modify_header(
+    update = list(
+      stat_1 ~ "**Non-Expansion State**",
+      stat_2 ~ "**Expansion State**"
+    )
+  ) |>
+  modify_spanning_header(
+    all_stat_cols() ~ "**Medicaid Expansion Status**"
+  ) |>
+  bold_labels() |>
+  italicize_levels() |>
+  add_p() |>
+  add_overall() |>
+  add_stat_label(
+    label = all_categorical() ~ "No. (%)"
+    )
+
+```
+
+## Rates of Insurance Continuity and Maternal Healthcare Utilization 
+
+These figures compares insurance continuity and maternal health care utlization at two points (adequate prenatal care measured by the Kessner Index and attendance at a postpartum appointment) for women living in states that did and did NOT expand Medicaid. 
+
+```{r}
+# Insurance continuity bar graph
+p1 = PRAMS_set %>% 
+  ggplot(aes(x = ExpSt, fill = InsCont), missing = FALSE) +
+  geom_bar() +
+  labs(x = "State Medicaid Expansion Status", 
+       y = "Insurance Continuity", 
+       title = "Insurance Continuity", 
+       subtitle = "by State Medicaid Expansion Status") +
+  theme_minimal()
+
+
+# Utilization bar graph
+p2 = PRAMS_set %>% 
+  ggplot(aes(x = ExpSt, fill = TotUtilR), missing = FALSE) +
+  geom_bar() +
+  labs(x = "State Medicaid Expansion Status", 
+       y = "Full Maternal Healthcare Utilization", 
+       title = "Full Maternal Healthcare Utilization", 
+       subtitle =  "by State Medicaid Expansion Status") +
+  theme_minimal()
+
+p1+p2
+
+```
+
+
+## Contingency tables
+The tables below are Frequency tables of **full maternal care utilization** and **uninsurance rates**  by state Medicaid Expansion status. 
+
+First, **Full Maternal Healthcare Utilization** by state Medicaid expansion status:
+
+```{r, warnings=FALSE, echo=FALSE}
+crossPRAMS <-
+  PRAMS_set |>
+  select(ExpY, TotUtilR, InsCont)
+
+CrossTabsU <- crossPRAMS |>
+  tbl_cross(
+    row = ExpY,
+    col = TotUtilR,
+    percent = "row",
+    margin = "row",
+    missing = "no",
+    label = list(TotUtilR ~ "Full Maternal Healthcare Utilization", ExpY ~ "State Medicaid Expansion Status")
+  ) |>
+  add_p(source_note = TRUE) |>
+   modify_header(
+    update = list(
+      stat_1 ~ "No",
+      stat_2 ~ "Yes"
+    )) |>
+  bold_labels()  |>
+  modify_caption("Comparison of Maternal Healthcare Utilization Rates by State Medicaid Expansion Status")
+
+CrossTabsU
+```
+
+Next, **Insurance Continuity** by state Medicaid expansion status:
+
+```{r, warnings=FALSE, echo=FALSE}
+CrossTabsI <- crossPRAMS |>
+  tbl_cross(
+    row = ExpY,
+    col = InsCont,
+    percent = "row",
+    margin = "row",
+    missing = "no",
+    label = list(InsCont ~ "Insurance Continuity", ExpY ~ "State Medicaid Expansion Status")
+  ) |>
+  add_p(source_note = TRUE) |>
+   modify_header(
+    update = list(
+      stat_1 ~ "**No**",
+      stat_2 ~ "**Yes**"
+    )) |>
+  bold_labels()  |>
+  modify_caption("Comparison of Insurance Continuity Rates by State Medicaid Expansion Status")
+
+CrossTabsI
+```
+
+## Logistic regression
+
+Is Medicaid Expansion associated with differences in insurance continuity and maternal healthcare utilization for pregnant women? 
+
+```{r, warnings=FALSE, echo=FALSE}
+# Logistic regression model for Insurance Continuity
+Reg1 <- glm(
+  InsContN ~ ExpSt,
+  data = PRAMS_set,
+  family = "binomial"
+)
+
+# Table for logreg results
+Reg1_tbl <- tbl_regression(
+  Reg1,
+  exponentiate = TRUE,
+  label = ExpSt ~ "ME (Yes)"
+  ) |>
+  add_global_p()
+
+
+# Logistic regression model for Full Maternal Healthcare Utilization
+Reg2 <- glm(
+  TotUtilRN ~ ExpSt,
+  data = PRAMS_set,
+  family = "binomial"
+)
+
+# Table for logreg results
+Reg2_tbl <- tbl_regression(
+  Reg2,
+  exponentiate = TRUE,
+  label = ExpSt ~ "ME (Yes)"
+  ) |>
+  add_global_p() 
+
+# Merge tables
+tbl_merge(
+  list(Reg1_tbl, Reg2_tbl),
+  tab_spanner = c("**Insurance Continuity**", "**Full Utilization**")
+) |>
+  modify_caption("Comparison of Insurance Continuity and Maternal Healthcare Utilization by State Medicaid Expansion Status")
+
+```
+
+Women in expansion states were 2.1 times as likely to have continuous insurance coverage as women in non-expansion states, and 12 percentage points more likely to attend all recommended maternal healthcare appointments.
+
+
+# Conclusion
+Medicaid Expansion following the 2010 Affordable Care Act is associated with an increase in insurance continuity and maternal healthcare utilization for pregnant women. Federal adoption of Medicaid Expansion may significantly improve insurance continuity and utilization for pregnancy women nationwide. 
